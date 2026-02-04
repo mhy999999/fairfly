@@ -1,0 +1,1863 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <!-- 允许 Worker 和 Blob，解决 HLS 在部分服务器环境下的跨域/CSP 问题 -->
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src *; style-src * 'unsafe-inline'; worker-src * blob:; media-src * blob: data:;">
+    <title>萤火虫Firefly</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@900&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS（样式框架） -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- HLS.js（m3u8 播放） -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.15/hls.min.js"></script>
+    <!-- Fuse.js（模糊搜索） -->
+    <script src="https://unpkg.com/fuse.js@6.6.2/dist/fuse.min.js"></script>
+    <!-- Vue.js 3（前端框架） -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <style>
+        :root {
+            --primary-blue: #7ab8ff;
+            --primary-blue-2: #6ee7ff;
+            --bg-fallback: #0b1020;
+            --text-main: rgba(255, 255, 255, 0.92);
+            --text-gray: rgba(255, 255, 255, 0.65);
+            --panel-bg: rgba(16, 20, 35, 0.52);
+            --panel-bg-2: rgba(255, 255, 255, 0.08);
+            --panel-border: rgba(255, 255, 255, 0.14);
+        }
+        body {
+            font-family: "Microsoft YaHei", Arial, Helvetica, sans-serif;
+            color: var(--text-main);
+            font-size: 14px;
+            background-color: var(--bg-fallback);
+            background-image: radial-gradient(1200px 800px at 20% 10%, rgba(122, 184, 255, 0.22), rgba(0,0,0,0)), radial-gradient(900px 700px at 80% 30%, rgba(110, 231, 255, 0.18), rgba(0,0,0,0));
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }
+        body[data-bg="back1"] {
+            background-image: url('back1.png'), radial-gradient(1200px 800px at 20% 10%, rgba(122, 184, 255, 0.18), rgba(0,0,0,0)), radial-gradient(900px 700px at 80% 30%, rgba(110, 231, 255, 0.14), rgba(0,0,0,0));
+        }
+        body[data-bg="back2"] {
+            background-image: url('back2.png'), radial-gradient(1200px 800px at 20% 10%, rgba(122, 184, 255, 0.18), rgba(0,0,0,0)), radial-gradient(900px 700px at 80% 30%, rgba(110, 231, 255, 0.14), rgba(0,0,0,0));
+        }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(180deg, rgba(8, 12, 24, 0.60) 0%, rgba(8, 12, 24, 0.35) 45%, rgba(8, 12, 24, 0.75) 100%);
+        }
+        body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: radial-gradient(800px 500px at 50% 0%, rgba(255,255,255,0.08), rgba(0,0,0,0));
+            mix-blend-mode: screen;
+        }
+        #app {
+            position: relative;
+            z-index: 0;
+        }
+        .glass-panel {
+            background: linear-gradient(180deg, var(--panel-bg), rgba(16, 20, 35, 0.38));
+            border: 1px solid var(--panel-border);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        /* 紧凑头部 */
+        .yx-header {
+            background: linear-gradient(90deg, rgba(16, 20, 35, 0.62), rgba(16, 20, 35, 0.46));
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .nav-item {
+            position: relative;
+            transition: all 0.2s;
+        }
+        .nav-item:hover, .nav-item.active {
+            background-color: rgba(255,255,255,0.12);
+        }
+        .nav-item.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--primary-blue), var(--primary-blue-2));
+        }
+        
+        /* 紧凑网格 */
+        .anime-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); /* 更紧凑的卡片宽度 */
+            gap: 15px; /* 更小的间距 */
+        }
+        .anime-item {
+            background: rgba(16, 20, 35, 0.52);
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            transition: box-shadow 0.2s;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+        .anime-item:hover {
+            box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+            border-color: rgba(122, 184, 255, 0.55);
+        }
+        .cover-wrapper {
+            position: relative;
+            padding-top: 140%; /* 1.4 的纵横比 */
+            overflow: hidden;
+        }
+        .cover-img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .anime-info {
+            padding: 8px;
+        }
+        .anime-title {
+            font-size: 14px;
+            line-height: 20px;
+            height: 40px; /* 最多两行 */
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            margin-bottom: 4px;
+        }
+        .anime-status {
+            font-size: 12px;
+            color: var(--text-gray);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* 详情弹窗（紧凑样式） */
+        .modal-overlay {
+            background-color: rgba(0,0,0,0.7);
+        }
+        .modal-content {
+            border-radius: 4px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .episode-btn {
+            border: 1px solid rgba(255,255,255,0.16);
+            background: rgba(16, 20, 35, 0.55);
+            color: rgba(255,255,255,0.85);
+            font-size: 12px;
+            padding: 6px 10px;
+            border-radius: 2px;
+        }
+        .episode-btn:hover {
+            border-color: rgba(110, 231, 255, 0.55);
+            color: rgba(110, 231, 255, 0.95);
+        }
+        .episode-btn.active {
+            background: linear-gradient(90deg, rgba(122, 184, 255, 0.90), rgba(110, 231, 255, 0.85));
+            color: rgba(16, 20, 35, 0.95);
+            border-color: rgba(110, 231, 255, 0.55);
+        }
+
+        /* 滚动条 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.20);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.06);
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.2s ease-out;
+        }
+        [v-cloak] { display: none; }
+    </style>
+</head>
+<body>
+    <div id="app" v-cloak class="min-h-screen flex flex-col">
+        <!-- 头部 -->
+        <header class="yx-header text-white sticky top-0 z-50">
+            <div class="container mx-auto px-2 md:px-4">
+                <!-- 顶部：Logo 与搜索 -->
+                <div class="flex justify-between items-center h-16 border-b border-white/15">
+                    <div class="flex items-center gap-4">
+                        <!-- Logo 占位 -->
+                        <div class="text-2xl font-bold italic tracking-tighter flex items-center">
+                            <span class="bg-gradient-to-r from-cyan-400 via-blue-600 to-orange-400 text-white rounded px-2.5 py-0.5 mr-2 shadow-sm font-black tracking-normal" style="font-family: 'Orbitron', sans-serif;">Fire</span>
+                            萤火虫Firefly
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center gap-2">
+                        <div class="relative">
+                            <input 
+                                type="text" 
+                                v-model="searchQuery"
+                                @focus="showSuggestions = true"
+                                @blur="setTimeout(() => showSuggestions = false, 200)"
+                                placeholder="请输入您想要搜索的动画..." 
+                                class="w-48 md:w-64 pl-3 pr-10 py-1.5 rounded-sm text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                            >
+                            <button class="absolute right-0 top-0 h-full px-3 text-gray-900 font-bold bg-white rounded-r-sm hover:bg-gray-100 transition-colors">
+                                搜
+                            </button>
+                            <!-- 搜索建议 -->
+                            <ul v-if="showSuggestions && searchSuggestions.length > 0" class="absolute z-50 w-full mt-1 bg-white rounded-sm shadow-lg max-h-60 overflow-y-auto text-gray-900 text-sm animate-fade-in">
+                                <li v-for="(item, index) in searchSuggestions" :key="index"
+                                    @click="selectSuggestion(item)"
+                                    class="px-3 py-2 cursor-pointer hover:bg-blue-50 transition-colors border-b border-gray-100 last:border-0 text-left">
+                                    <div class="font-bold truncate text-gray-800">{{ item.片名 }}</div>
+                                    <div class="text-xs text-gray-500 truncate flex justify-between">
+                                        <span>{{ item.年代 }}</span>
+                                        <span>{{ item.类型 }}</span>
+                                    </div>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 底部：导航（季度） -->
+                <nav class="h-10 flex items-center overflow-visible z-40">
+                    <a href="#" 
+                       @click.prevent="goHome()" 
+                       class="nav-item px-4 h-full flex items-center text-sm font-medium"
+                       :class="{ 'active': currentActiveNav === 'home' }">
+                        首页/筛选
+                    </a>
+
+                    <a href="#" 
+                       @click.prevent="currentStatus = 'ongoing'; currentSeason = 'all'; currentGenre = 'all'; currentView = 'list'" 
+                       class="nav-item px-4 h-full flex items-center text-sm font-medium"
+                       :class="{ 'active': currentActiveNav === 'ongoing' }">
+                        连载番剧
+                    </a>
+
+                    <a href="#" 
+                       @click.prevent="currentStatus = 'completed'; currentSeason = 'all'; currentGenre = 'all'; currentView = 'list'" 
+                       class="nav-item px-4 h-full flex items-center text-sm font-medium"
+                       :class="{ 'active': currentActiveNav === 'completed' }">
+                        完结番剧
+                    </a>
+
+                    <a href="#" 
+                       @click.prevent="filterSeason(String(currentYear)); currentStatus = 'all'; currentGenre = 'all'; currentView = 'list'" 
+                       class="nav-item px-4 h-full flex items-center text-sm font-medium"
+                       :class="{ 'active': currentActiveNav === 'currentYear' }">
+                        {{ currentYear }}年新番
+                    </a>
+
+                    <a href="#" 
+                       @click.prevent="filterSeason(String(prevYear)); currentStatus = 'all'; currentGenre = 'all'; currentView = 'list'" 
+                       class="nav-item px-4 h-full flex items-center text-sm font-medium"
+                       :class="{ 'active': currentActiveNav === 'prevYear' }">
+                        {{ prevYear }}年新番
+                    </a>
+
+                    <a href="#" 
+                       @click.prevent="currentView = 'archive'" 
+                       class="nav-item px-4 h-full flex items-center text-sm font-medium"
+                       :class="{ 'active': currentActiveNav === 'archive' }">
+                        新番专题
+                    </a>
+                    <a href="theater_version.html" 
+                       class="nav-item px-4 h-full flex items-center text-sm font-medium">
+                        剧场版
+                    </a>
+                </nav>
+            </div>
+        </header>
+
+        <!-- 主内容 -->
+        <main class="container mx-auto px-2 md:px-4 py-4 flex-1">
+            <!-- 面包屑 / 状态栏 -->
+            <div class="glass-panel p-3 mb-4 rounded-sm flex justify-between items-center text-xs text-white/70 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+                <div>
+                    当前位置：<span class="text-cyan-200">首页</span> 
+                    <span v-if="currentStatus !== 'all'"> &gt; {{ currentStatus === 'ongoing' ? '连载番剧' : '完结番剧' }}</span>
+                    <span v-if="currentGenre !== 'all'"> &gt; {{ currentGenre }}</span>
+                    <span v-if="currentSeason !== 'all'"> &gt; {{ getSeasonLabel(currentSeason) }}</span>
+                </div>
+                <div>
+                    共找到 <span class="text-cyan-200 font-bold">{{ filteredAnimeList.length }}</span> 部相关动漫
+                </div>
+            </div>
+
+            <div class="flex flex-col lg:flex-row gap-4 items-start">
+                <div class="flex-1 min-w-0">
+
+            <!-- 子导航：按年份选择季度 -->
+            <div v-if="!loading && currentView === 'list'" class="glass-panel p-4 mb-4 rounded-sm text-sm shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+                <!-- 状态行 -->
+                <div class="flex items-center gap-3 mb-3 border-b border-white/10 pb-3">
+                    <span class="text-cyan-200 font-bold shrink-0 text-xs uppercase tracking-wider">状态</span>
+                    <div class="flex items-center gap-2 overflow-x-auto whitespace-nowrap no-scrollbar flex-1">
+                        <button
+                            @click="currentStatus = 'all'"
+                            class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                            :class="currentStatus === 'all' ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                        >
+                            全部
+                        </button>
+                        <button
+                            @click="currentStatus = 'ongoing'"
+                            class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                            :class="currentStatus === 'ongoing' ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                        >
+                            连载
+                        </button>
+                        <button
+                            @click="currentStatus = 'completed'"
+                            class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                            :class="currentStatus === 'completed' ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                        >
+                            完结
+                        </button>
+                    </div>
+                </div>
+                <!-- 类型行 -->
+                <div class="flex items-start gap-3 mb-3 border-b border-white/10 pb-3">
+                    <span class="text-cyan-200 font-bold shrink-0 text-xs uppercase tracking-wider">类型</span>
+                    <div class="flex-1 flex items-start gap-2 min-w-0">
+                        <div class="flex-1 flex flex-wrap gap-2 min-w-0">
+                            <button
+                                @click="currentGenre = 'all'"
+                                class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                                :class="currentGenre === 'all' ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                            >
+                                全部
+                            </button>
+                            <button
+                                v-for="genre in displayedGenres"
+                                :key="genre"
+                                @click="currentGenre = genre"
+                                class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                                :class="currentGenre === genre ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                            >
+                                {{ genre }}
+                            </button>
+                        </div>
+                        <button
+                            v-if="allGenres.length > genrePreviewCount"
+                            @click="genreExpanded = !genreExpanded"
+                            class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:text-white/90 hover:border-white/30 shrink-0"
+                        >
+                            <span class="inline-flex items-center gap-1.5">
+                                <span>{{ genreExpanded ? '收起' : '展开' }}</span>
+                                <svg v-if="!genreExpanded" xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.24 4.5a.75.75 0 0 1-1.08 0l-4.24-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                </svg>
+                                <svg v-else xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M14.77 12.79a.75.75 0 0 1-1.06-.02L10 8.832l-3.71 3.938a.75.75 0 1 1-1.08-1.04l4.24-4.5a.75.75 0 0 1 1.08 0l4.24 4.5a.75.75 0 0 1-.02 1.06Z" clip-rule="evenodd" />
+                                </svg>
+                            </span>
+                        </button>
+                    </div>
+                </div>
+                <!-- 年份行 -->
+                <div class="flex items-start gap-3 mb-3 border-b border-white/10 pb-3">
+                    <span class="text-cyan-200 font-bold shrink-0 text-xs uppercase tracking-wider">年份</span>
+                    <div class="flex-1 flex items-start gap-2 min-w-0">
+                        <div class="flex-1 flex flex-wrap gap-2 min-w-0">
+                            <button
+                                @click="setSeasonNavYear('all'); filterSeason('all')"
+                                class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                                :class="seasonNavYear === 'all' ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                            >
+                                全部
+                            </button>
+                            <button
+                                v-for="year in displayedYears"
+                                :key="year"
+                                @click="setSeasonNavYear(year)"
+                                class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                                :class="seasonNavYear === year ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                            >
+                                {{ year }}
+                            </button>
+                        </div>
+                        <button
+                            v-if="seasonNavYears.length > yearPreviewCount"
+                            @click="yearExpanded = !yearExpanded"
+                            class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:text-white/90 hover:border-white/30 shrink-0"
+                        >
+                            <span class="inline-flex items-center gap-1.5">
+                                <span>{{ yearExpanded ? '收起' : '展开' }}</span>
+                                <svg v-if="!yearExpanded" xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.24 4.5a.75.75 0 0 1-1.08 0l-4.24-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                </svg>
+                                <svg v-else xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M14.77 12.79a.75.75 0 0 1-1.06-.02L10 8.832l-3.71 3.938a.75.75 0 1 1-1.08-1.04l4.24-4.5a.75.75 0 0 1 1.08 0l4.24 4.5a.75.75 0 0 1-.02 1.06Z" clip-rule="evenodd" />
+                                </svg>
+                            </span>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 季度行 -->
+                <div class="flex items-center gap-3">
+                    <span class="text-cyan-200 font-bold shrink-0 text-xs uppercase tracking-wider">季度</span>
+                    <div class="flex items-center gap-2 overflow-x-auto whitespace-nowrap no-scrollbar flex-1">
+                        <button
+                            @click="filterSeason(seasonNavYear)"
+                            class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border"
+                            :class="currentSeason === seasonNavYear ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                        >
+                            全部
+                        </button>
+                        <button
+                            v-for="q in seasonNavQuarters"
+                            :key="q.key"
+                            :disabled="!q.enabled"
+                            @click="filterSeason(q.key)"
+                            class="px-4 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border disabled:opacity-30 disabled:cursor-not-allowed"
+                            :class="currentSeason === q.key ? 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]' : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30'"
+                        >
+                            {{ q.label }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 加载中 -->
+            <div v-if="loading" class="text-center py-20 text-white/70">
+                <p>正在加载数据...</p>
+            </div>
+
+            <!-- 索引视图 -->
+            <div v-else-if="currentView === 'archive'" class="animate-fade-in">
+                <h2 class="text-2xl font-bold text-white mb-6 pl-2 border-l-4 border-cyan-300">新番专题</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div v-for="group in groupedSeasons" :key="group.year" class="glass-panel p-5 rounded-lg hover:bg-white/5 transition-colors">
+                        <div class="text-3xl font-bold text-white/20 mb-4">{{ group.year }}</div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <button 
+                                v-for="season in group.seasons" 
+                                :key="season.key"
+                                @click="filterSeason(season.key)"
+                                class="px-3 py-2 text-sm text-center rounded bg-white/5 hover:bg-cyan-500/20 hover:text-cyan-200 border border-white/10 hover:border-cyan-500/30 transition-all"
+                            >
+                                {{ season.label }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 动漫列表 -->
+            <div v-else>
+                <div class="anime-grid">
+                    <div 
+                        v-for="(anime, index) in paginatedAnimeList" 
+                        :key="index"
+                        class="anime-item cursor-pointer group"
+                        @click="openDetail(anime)"
+                    >
+                        <div class="cover-wrapper">
+                            <img 
+                                :src="anime.封面 || 'https://via.placeholder.com/300x450?text=No+Cover'" 
+                                class="cover-img group-hover:scale-105 transition-transform duration-300"
+                                loading="lazy"
+                            >
+                            <div class="absolute bottom-0 right-0 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded-tl-sm">
+                                {{ anime.豆瓣 }}
+                            </div>
+                            <div class="absolute top-0 left-0 bg-gradient-to-r from-blue-400 to-cyan-300 text-slate-900 text-xs px-1.5 py-0.5 shadow-sm" v-if="isNew(anime.首播时间)">
+                                新
+                            </div>
+                        </div>
+                        <div class="anime-info">
+                            <h3 class="anime-title font-bold text-white/90 group-hover:text-cyan-200" :title="anime.片名">{{ anime.片名 }}</h3>
+                            <div class="flex justify-between items-center mt-1">
+                                <span class="anime-status">{{ anime.状态 || '连载中' }}</span>
+                                <span class="text-xs text-white/55">{{ anime.年代 }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分页控件 -->
+                <div v-if="totalPages > 1" class="flex justify-center items-center mt-8 gap-2">
+                    <button 
+                        @click="changePage(currentPage - 1)" 
+                        :disabled="currentPage === 1"
+                        class="px-3 py-1 border border-white/15 rounded-sm text-sm text-white/80 hover:border-cyan-200 hover:text-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed bg-white/10 backdrop-blur"
+                    >
+                        上一页
+                    </button>
+                    
+                    <div class="flex gap-1">
+                        <template v-for="page in totalPages" :key="page">
+                            <button 
+                                v-if="Math.abs(page - currentPage) < 3 || page === 1 || page === totalPages"
+                                @click="changePage(page)"
+                                class="px-3 py-1 border rounded-sm text-sm"
+                                :class="currentPage === page ? 'bg-gradient-to-r from-blue-400 to-cyan-200 text-slate-900 border-white/0' : 'bg-white/10 border-white/15 text-white/80 hover:border-cyan-200 hover:text-cyan-200 backdrop-blur'"
+                            >
+                                {{ page }}
+                            </button>
+                            <span v-else-if="Math.abs(page - currentPage) === 3" class="px-1 text-white/50">...</span>
+                        </template>
+                    </div>
+
+                    <button 
+                        @click="changePage(currentPage + 1)" 
+                        :disabled="currentPage === totalPages"
+                        class="px-3 py-1 border border-white/15 rounded-sm text-sm text-white/80 hover:border-cyan-200 hover:text-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed bg-white/10 backdrop-blur"
+                    >
+                        下一页
+                    </button>
+                </div>
+            </div>
+                </div>
+                <aside v-if="currentView === 'list'" class="w-full lg:w-80 xl:w-96 shrink-0 lg:sticky lg:top-24">
+                    <div class="glass-panel p-4 rounded-sm text-sm shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+                        <h2 class="text-lg font-bold text-white mb-3 pl-2 border-l-4 border-cyan-300">追番日历</h2>
+                        <div class="grid grid-cols-4 gap-2 mb-3">
+                            <button 
+                                v-for="(day, index) in weekDays" 
+                                :key="index"
+                                @click="currentDayIndex = index"
+                                class="px-2 py-1.5 rounded-full text-xs font-medium transition-all duration-200 border w-full"
+                                :class="{ 'bg-cyan-500/20 text-cyan-200 border-cyan-400/50 shadow-[0_0_10px_rgba(103,232,249,0.2)]': index === currentDayIndex, 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/90 hover:border-white/30': index !== currentDayIndex }"
+                            >
+                                {{ day }}
+                            </button>
+                        </div>
+                        <div class="glass-panel p-3 rounded-sm bg-black/20">
+                            <div class="text-sm font-bold text-cyan-200 mb-2 text-center border-b border-white/10 pb-2">
+                                {{ weekDays[currentDayIndex] }} 更新
+                            </div>
+                            <div class="space-y-2 max-h-[60vh] lg:max-h-[calc(100vh-15rem)] overflow-y-auto no-scrollbar pr-1">
+                                <div 
+                                    v-for="(item, idx) in currentDayAnime" 
+                                    :key="idx"
+                                    @click="handleCalendarClick(item.name)"
+                                    class="px-3 py-2 rounded-sm border border-white/10 hover:border-cyan-400/50 hover:bg-cyan-500/10 transition-all duration-200 cursor-pointer flex justify-between items-center gap-3"
+                                >
+                                    <span class="text-white/90 font-medium truncate min-w-0 flex-1" :title="item.name">{{ item.name }}</span>
+                                    <span class="text-cyan-200/80 text-[11px] bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 shrink-0">{{ item.time || '时间未定' }}</span>
+                                </div>
+                                <div v-if="currentDayAnime.length === 0" class="text-center text-white/40 py-8 flex flex-col items-center">
+                                    <span class="text-2xl mb-2">😴</span>
+                                    <span>今日暂无更新</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </main>
+
+        <!-- 页脚 -->
+        <footer class="glass-panel border-t border-white/10 py-6 mt-8 text-center text-xs text-white/70">
+            <div class="container mx-auto">
+                <p class="mb-2">本站内容均来源于网络，仅供学习交流使用</p>
+                <p class="mb-2">特别感谢茅台资源，暴风资源和Hazx大佬的分享</p>
+            </div>
+        </footer>
+
+        <!-- 详情弹窗（紧凑） -->
+        <div v-if="selectedAnime" class="fixed inset-0 z-[100] flex items-center justify-center p-2 md:p-4 modal-overlay backdrop-blur-sm" @click.self="closeDetail">
+            <div class="glass-panel w-full max-w-6xl h-[85vh] flex flex-col md:flex-row overflow-hidden modal-content animate-fade-in relative">
+                
+                <!-- 关闭按钮 -->
+                <button @click="closeDetail" class="absolute top-2 right-2 z-50 bg-white/10 hover:bg-red-500 hover:text-white text-white/80 border border-white/10 rounded-full p-1.5 transition-colors backdrop-blur">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+
+                <!-- 左侧：信息 -->
+                <div class="w-full md:w-80 bg-white/5 p-4 overflow-y-auto border-r border-white/10 shrink-0">
+                    <div class="aspect-[2/3] w-48 mx-auto md:w-full mb-4 shadow-md rounded-sm overflow-hidden">
+                        <img :src="selectedAnime.封面" class="w-full h-full object-cover">
+                    </div>
+                    <h2 class="text-lg font-bold text-white/90 mb-3 text-center">{{ selectedAnime.片名 }}</h2>
+                    
+                    <div class="space-y-2 text-xs text-white/70 border-t border-white/10 pt-3">
+                        <p><span class="text-white/50">别名：</span>{{ selectedAnime.别名 }}</p>
+                        <p><span class="text-white/50">首播：</span>{{ selectedAnime.首播时间 || selectedAnime.年代 }}</p>
+                        <p><span class="text-white/50">地区：</span>{{ selectedAnime.地区 }}</p>
+                        <p><span class="text-white/50">类型：</span>{{ selectedAnime.类型 }}</p>
+                        <p><span class="text-white/50">导演：</span>{{ selectedAnime.导演 }}</p>
+                        <p><span class="text-white/50">主演：</span>{{ selectedAnime.演员 }}</p>
+                    </div>
+                    <div class="mt-4 text-xs text-white/70 leading-relaxed border-t border-white/10 pt-3">
+                        <span class="font-bold text-white/80 block mb-1">简介：</span>
+                        {{ selectedAnime.剧情介绍 }}
+                    </div>
+                </div>
+
+                <!-- 右侧：播放器与列表 -->
+                <div class="flex-1 flex flex-col bg-transparent min-w-0">
+                    <!-- 播放器区域 -->
+                    <div class="bg-black w-full aspect-video md:h-[60%] flex items-center justify-center relative group">
+                        <video id="videoPlayer" class="w-full h-full" controls autoplay preload="auto" playsinline webkit-playsinline></video>
+                        <div v-if="!currentEpisodeUrl" class="absolute text-white/50 text-sm pointer-events-none">
+                            请选择下方集数开始播放
+                        </div>
+                    </div>
+
+                    <!-- 选项卡 -->
+                    <div class="flex border-b border-white/10">
+                        <button 
+                            @click="activeTab = 'episodes'" 
+                            class="flex-1 py-3 text-sm font-bold text-center transition-colors relative"
+                            :class="activeTab === 'episodes' ? 'text-cyan-200' : 'text-white/70 hover:bg-white/5'"
+                        >
+                            播放列表
+                            <span v-if="activeTab === 'episodes'" class="absolute bottom-0 left-0 w-full h-0.5 bg-gradient-to-r from-blue-400 to-cyan-200"></span>
+                        </button>
+                        <button 
+                            @click="activeTab = 'related'" 
+                            class="flex-1 py-3 text-sm font-bold text-center transition-colors relative"
+                            :class="activeTab === 'related' ? 'text-cyan-200' : 'text-white/70 hover:bg-white/5'"
+                        >
+                            猜你喜欢
+                            <span v-if="activeTab === 'related'" class="absolute bottom-0 left-0 w-full h-0.5 bg-gradient-to-r from-blue-400 to-cyan-200"></span>
+                        </button>
+                    </div>
+
+                    <!-- 内容区域 -->
+                    <div class="flex-1 overflow-y-auto bg-transparent relative">
+                        <!-- 播放列表 -->
+                        <div v-if="activeTab === 'episodes'" class="p-4 absolute inset-0 overflow-y-auto">
+                            <div v-if="selectedAnime.播放地址 && selectedAnime.播放地址.length > 0">
+                                <div v-for="(source, sIndex) in selectedAnime.播放地址" :key="sIndex" class="mb-4">
+                                    <div class="flex items-center mb-2">
+                                        <span class="bg-white/10 text-cyan-200 text-xs px-2 py-0.5 rounded-sm mr-2 border border-white/10">来源</span>
+                                        <h4 class="text-sm font-bold text-white/85">{{ source.source || '默认源' }}</h4>
+                                    </div>
+                                    <div class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2">
+                                        <button 
+                                            v-for="(ep, epIndex) in source.episodes" 
+                                            :key="epIndex"
+                                            class="episode-btn truncate"
+                                            :class="{ 'active': currentEpisodeUrl === ep.url }"
+                                            @click="playEpisode(ep.url, ep.name)"
+                                            :title="ep.name"
+                                        >
+                                            {{ ep.name }}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="flex flex-col items-center justify-center h-full text-white/55 text-sm">
+                                <span class="text-3xl mb-2">😕</span>
+                                暂无播放资源
+                            </div>
+                        </div>
+
+                        <!-- 猜你喜欢 -->
+                        <div v-if="activeTab === 'related'" class="p-4 absolute inset-0 overflow-y-auto">
+                            <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                                <div 
+                                    v-for="(anime, idx) in relatedList" 
+                                    :key="idx" 
+                                    class="cursor-pointer group"
+                                    @click="openDetail(anime)"
+                                >
+                                    <div class="relative aspect-[2/3] overflow-hidden rounded-sm mb-1">
+                                        <img :src="anime.封面" class="w-full h-full object-cover group-hover:scale-105 transition-transform">
+                                        <div class="absolute bottom-0 right-0 bg-black/60 text-white text-[10px] px-1">
+                                            {{ anime.豆瓣 }}
+                                        </div>
+                                    </div>
+                                    <h4 class="text-xs text-white/80 truncate group-hover:text-cyan-200">{{ anime.片名 }}</h4>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const bg = Math.random() < 0.5 ? 'back1' : 'back2';
+            document.body.dataset.bg = bg;
+        })();
+        const { createApp, ref, computed, onMounted, onUnmounted, nextTick, watch } = Vue;
+
+        createApp({
+            setup() {
+                const animeList = ref([]);
+                const movieList = ref([]);
+
+                const searchPool = computed(() => {
+                    const items = [...(animeList.value || []), ...(movieList.value || [])];
+                    const map = new Map();
+                    for (const item of items) {
+                        if (!item) continue;
+                        const key = item.豆瓣ID || item.detail_url || `${item.片名 || ''}__${item.年代 || ''}`;
+                        if (!map.has(key)) map.set(key, item);
+                    }
+                    return Array.from(map.values());
+                });
+                
+                // 追番日历数据
+                const calendarData = ref([]);
+
+                const currentDayAnime = computed(() => {
+                    const day = weekDays[currentDayIndex.value];
+                    if (!calendarData.value) return [];
+                    return calendarData.value
+                        .filter(item => item.day === day)
+                        .sort((a, b) => {
+                             if (!a.time) return 1;
+                             if (!b.time) return -1;
+                             return a.time.localeCompare(b.time);
+                        });
+                });
+
+                const handleCalendarClick = (name) => {
+                    if (!name) return;
+                    const pool = searchPool.value || [];
+                    if (pool.length === 0) {
+                        searchQuery.value = name;
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        return;
+                    }
+
+                    const normalizeBasic = (str) => {
+                        if (!str) return '';
+                        return String(str)
+                            .toLowerCase()
+                            .replace(/[\s\t\n\r]+/g, '')
+                            .replace(/[·・'’"“”。，、:：;；!！?？~～\-—_]/g, '')
+                            .replace(/[（）()【】\[\]《》<>]/g, '')
+                            .replace(/[「」『』]/g, '')
+                            .replace(/的/g, '')
+                            .replace(/第[0-9一二三四五六七八九十百千]+[季期部]/g, '')
+                            .replace(/(?:season|s)\d+/g, '');
+                    };
+
+                    const makeVariants = (str) => {
+                        if (!str) return [];
+                        const raw = String(str);
+                        const removedBracketContent = raw.replace(/[（(【\[].*?[）)】\]]/g, '');
+                        const removedRegion = raw
+                            .replace(/（[^）]*港澳台[^）]*）/g, '')
+                            .replace(/\([^)]*港澳台[^)]*\)/g, '');
+
+                        const variants = new Set([
+                            normalizeBasic(raw),
+                            normalizeBasic(removedBracketContent),
+                            normalizeBasic(removedRegion),
+                        ]);
+                        return Array.from(variants).filter(v => v && v.length >= 2);
+                    };
+
+                    const longestCommonSubstringLen = (a, b) => {
+                        if (!a || !b) return 0;
+                        const n = a.length;
+                        const m = b.length;
+                        if (!n || !m) return 0;
+
+                        let maxLen = 0;
+                        const dp = new Array(m + 1).fill(0);
+                        for (let i = 1; i <= n; i++) {
+                            let prev = 0;
+                            for (let j = 1; j <= m; j++) {
+                                const temp = dp[j];
+                                if (a[i - 1] === b[j - 1]) {
+                                    dp[j] = prev + 1;
+                                    if (dp[j] > maxLen) maxLen = dp[j];
+                                } else {
+                                    dp[j] = 0;
+                                }
+                                prev = temp;
+                            }
+                        }
+                        return maxLen;
+                    };
+
+                    const targets = makeVariants(name);
+                    if (targets.length === 0) return;
+
+                    let best = null;
+                    let bestScore = 0;
+
+                    for (const a of pool) {
+                        const titleVariants = makeVariants(a && a.片名);
+                        const aliasVariants = makeVariants(a && a.别名);
+                        const candidates = [...titleVariants, ...aliasVariants];
+                        if (candidates.length === 0) continue;
+
+                        let score = 0;
+                        for (const t of targets) {
+                            for (const c of candidates) {
+                                if (c === t) {
+                                    score = Math.max(score, 100);
+                                    continue;
+                                }
+                                if (c.length >= 4 && t.includes(c)) {
+                                    score = Math.max(score, 78 + Math.min(12, Math.round((c.length / t.length) * 12)));
+                                }
+                                if (t.length >= 4 && c.includes(t)) {
+                                    score = Math.max(score, 78 + Math.min(12, Math.round((t.length / c.length) * 12)));
+                                }
+                                const lcs = longestCommonSubstringLen(t, c);
+                                if (lcs >= 4) {
+                                    score = Math.max(score, 64 + Math.min(30, lcs * 4));
+                                }
+                            }
+                        }
+
+                        if (score > bestScore) {
+                            bestScore = score;
+                            best = a;
+                            if (bestScore >= 100) break;
+                        }
+                    }
+
+                    if (best && bestScore >= 86) {
+                        openDetail(best);
+                        return;
+                    }
+
+                    if (calendarFuse) {
+                        const queries = [name, ...targets];
+                        let bestItem = null;
+                        let bestFuseScore = Infinity;
+                        let bestLcs = 0;
+
+                        const scoreOf = (res) => (res && typeof res.score === 'number' ? res.score : Infinity);
+                        const lcsOf = (item) => {
+                            const title = normalizeBasic(item && item.片名);
+                            const alias = normalizeBasic(item && item.别名);
+                            let max = 0;
+                            for (const t of targets) {
+                                if (title) max = Math.max(max, longestCommonSubstringLen(t, title));
+                                if (alias) max = Math.max(max, longestCommonSubstringLen(t, alias));
+                            }
+                            return max;
+                        };
+
+                        for (const q of queries) {
+                            const results = calendarFuse.search(q).slice(0, 6);
+                            for (const r of results) {
+                                const item = r && r.item;
+                                if (!item) continue;
+                                const lcs = lcsOf(item);
+                                const s = scoreOf(r);
+
+                                if (lcs > bestLcs || (lcs === bestLcs && s < bestFuseScore)) {
+                                    bestLcs = lcs;
+                                    bestFuseScore = s;
+                                    bestItem = item;
+                                }
+                            }
+                        }
+
+                        if (bestItem && (bestFuseScore <= 0.18 || (bestLcs >= 3 && bestFuseScore <= 0.55))) {
+                            openDetail(bestItem);
+                            return;
+                        }
+                    }
+
+                    searchQuery.value = name;
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                };
+
+
+                const weekDays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+                const currentDayIndex = ref(new Date().getDay() === 0 ? 6 : new Date().getDay() - 1);
+                
+                const calendarGrouped = computed(() => {
+                    const groups = {};
+                    weekDays.forEach(day => groups[day] = []);
+                    calendarData.forEach(item => {
+                        if (groups[item.day]) {
+                            groups[item.day].push(item);
+                        }
+                    });
+                    Object.keys(groups).forEach(day => {
+                        groups[day].sort((a, b) => {
+                             if (!a.time) return 1;
+                             if (!b.time) return -1;
+                             return a.time.localeCompare(b.time);
+                        });
+                    });
+                    return groups;
+                });
+
+                const loading = ref(true);
+                const searchQuery = ref('');
+                const selectedAnime = ref(null);
+                const currentEpisodeUrl = ref(null);
+                const currentSeason = ref('all');
+                const currentStatus = ref('all'); // 'all', 'ongoing', 'completed'
+                const currentGenre = ref('all');
+                const hlsInstance = ref(null);
+                const hlsVideoPrepared = ref(false);
+                let videoUxTeardown = null;
+
+                // 额外状态
+                const activeTab = ref('episodes');
+                const relatedList = ref([]);
+                const currentView = ref('list'); // 'list' | 'archive'
+                const currentYear = new Date().getFullYear();
+                const prevYear = currentYear - 1;
+                let fuse = null;
+                let calendarFuse = null;
+                
+                // 分页
+                const currentPage = ref(1);
+                const pageSize = ref(24);
+
+                // 搜索建议
+                const showSuggestions = ref(false);
+                const searchSuggestions = computed(() => {
+                    if (!searchQuery.value || !fuse) return [];
+                    const results = fuse.search(searchQuery.value);
+                    return results.slice(0, 8).map(r => r.item);
+                });
+
+                const selectSuggestion = (anime) => {
+                    searchQuery.value = anime.片名;
+                    showSuggestions.value = false;
+                };
+
+                const getCurrentEpisodePosition = () => {
+                    const anime = selectedAnime.value;
+                    const url = currentEpisodeUrl.value;
+                    if (!anime || !url) return null;
+                    const currentUrl = typeof url === 'string' ? url.trim() : url;
+
+                    const sources = Array.isArray(anime.播放地址) ? anime.播放地址 : [];
+                    for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex++) {
+                        const source = sources[sourceIndex];
+                        const episodes = Array.isArray(source?.episodes) ? source.episodes : [];
+                        for (let episodeIndex = 0; episodeIndex < episodes.length; episodeIndex++) {
+                            const ep = episodes[episodeIndex];
+                            const epUrl = typeof ep?.url === 'string' ? ep.url.trim() : ep?.url;
+                            if (epUrl === currentUrl) return { sourceIndex, episodeIndex };
+                        }
+                    }
+                    return null;
+                };
+
+                const playNextEpisode = () => {
+                    const pos = getCurrentEpisodePosition();
+                    if (!pos) return;
+                    const sources = Array.isArray(selectedAnime.value?.播放地址) ? selectedAnime.value.播放地址 : [];
+                    const episodes = Array.isArray(sources[pos.sourceIndex]?.episodes) ? sources[pos.sourceIndex].episodes : [];
+                    const next = episodes[pos.episodeIndex + 1];
+                    if (!next?.url) return;
+                    playEpisode(next.url, next.name);
+                };
+
+                const ensureAutoNextBound = (video) => {
+                    if (!video) return;
+                    if (video.dataset.autoNextBound === '1') return;
+                    video.dataset.autoNextBound = '1';
+                    let triggeredForUrl = null;
+                    const trigger = () => {
+                        const url = currentEpisodeUrl.value;
+                        if (!url) return;
+                        if (triggeredForUrl === url) return;
+                        triggeredForUrl = url;
+                        playNextEpisode();
+                    };
+                    video.addEventListener('ended', () => {
+                        trigger();
+                    });
+                    video.addEventListener('timeupdate', () => {
+                        if (video.seeking) return;
+                        const duration = video.duration;
+                        if (!Number.isFinite(duration) || duration <= 0) return;
+                        if (video.paused) return;
+                        if (duration - video.currentTime > 0.35) return;
+                        trigger();
+                    });
+                };
+
+                const isTimeBuffered = (mediaEl, time) => {
+                    try {
+                        const buffered = mediaEl.buffered;
+                        for (let i = 0; i < buffered.length; i++) {
+                            if (time >= buffered.start(i) && time <= buffered.end(i)) return true;
+                        }
+                    } catch (_) {}
+                    return false;
+                };
+
+                const attachSeekPreview = (video, getHls) => {
+                    const container = video?.parentElement;
+                    if (!container) return () => {};
+
+                    const existing = container.querySelector('canvas[data-seek-preview="1"]');
+                    const canvas = existing || document.createElement('canvas');
+                    if (!existing) {
+                        canvas.dataset.seekPreview = '1';
+                        canvas.className = 'absolute inset-0 w-full h-full pointer-events-none hidden';
+                        container.appendChild(canvas);
+                    }
+                    const ctx = canvas.getContext('2d');
+                    let seekToken = 0;
+                    let shouldCapture = false;
+                    let lastCapturedTime = null;
+
+                    const hide = () => {
+                        canvas.classList.add('hidden');
+                    };
+                    const show = () => {
+                        canvas.classList.remove('hidden');
+                    };
+
+                    const capture = () => {
+                        const w = video.videoWidth;
+                        const h = video.videoHeight;
+                        if (!w || !h || !ctx) return false;
+                        if (canvas.width !== w) canvas.width = w;
+                        if (canvas.height !== h) canvas.height = h;
+                        ctx.drawImage(video, 0, 0, w, h);
+                        lastCapturedTime = video.currentTime;
+                        show();
+                        return true;
+                    };
+
+                    const requestCapture = (token) => {
+                        const attempt = () => {
+                            if (token !== seekToken) return;
+                            if (!capture()) return;
+                            const hls = typeof getHls === 'function' ? getHls() : null;
+                            if (hls && typeof hls.startLoad === 'function') {
+                                try {
+                                    hls.startLoad();
+                                } catch (_) {}
+                            }
+                        };
+
+                        if (typeof video.requestVideoFrameCallback === 'function') {
+                            video.requestVideoFrameCallback(() => attempt());
+                        } else {
+                            setTimeout(attempt, 0);
+                        }
+                    };
+
+                    const onSeeking = () => {
+                        hide();
+                        shouldCapture = !isTimeBuffered(video, video.currentTime);
+                        seekToken++;
+                    };
+
+                    const onSeeked = () => {
+                        if (!shouldCapture) return;
+                        const token = seekToken;
+                        requestCapture(token);
+                    };
+
+                    const onPlaying = () => hide();
+
+                    const onTimeUpdate = () => {
+                        if (canvas.classList.contains('hidden')) return;
+                        if (lastCapturedTime == null) return;
+                        if (!video.paused && Math.abs(video.currentTime - lastCapturedTime) > 0.15) hide();
+                    };
+
+                    const onEmptied = () => hide();
+
+                    video.addEventListener('seeking', onSeeking);
+                    video.addEventListener('seeked', onSeeked);
+                    video.addEventListener('playing', onPlaying);
+                    video.addEventListener('timeupdate', onTimeUpdate);
+                    video.addEventListener('emptied', onEmptied);
+
+                    return () => {
+                        video.removeEventListener('seeking', onSeeking);
+                        video.removeEventListener('seeked', onSeeked);
+                        video.removeEventListener('playing', onPlaying);
+                        video.removeEventListener('timeupdate', onTimeUpdate);
+                        video.removeEventListener('emptied', onEmptied);
+                        hide();
+                        if (!existing) canvas.remove();
+                    };
+                };
+
+                // 键盘控制逻辑
+                const setupKeyboardControls = () => {
+                    let pressTimer = null;
+                    let isSpeeding = false;
+                    const LONG_PRESS_DELAY = 300; // ms
+
+                    const showToast = (msg) => {
+                        const container = document.querySelector('.aspect-video');
+                        if (!container) return;
+                        
+                        // 移除旧 toast
+                        const old = container.querySelector('.seek-toast');
+                        if (old) old.remove();
+
+                        const toast = document.createElement('div');
+                        toast.className = 'seek-toast';
+                        toast.textContent = msg;
+                        toast.style.cssText = `
+                            position: absolute;
+                            top: 50%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            background: rgba(0,0,0,0.6);
+                            color: white;
+                            padding: 8px 16px;
+                            border-radius: 4px;
+                            pointer-events: none;
+                            z-index: 50;
+                            font-size: 14px;
+                            backdrop-filter: blur(2px);
+                            transition: opacity 0.3s;
+                        `;
+                        container.appendChild(toast);
+                        setTimeout(() => {
+                            toast.style.opacity = '0';
+                            setTimeout(() => toast.remove(), 300);
+                        }, 800);
+                    };
+                    
+                    const showSpeedToast = (show) => {
+                        const container = document.querySelector('.aspect-video');
+                        if (!container) return;
+                        
+                        let toast = container.querySelector('.speed-toast');
+                        if (show) {
+                            if (!toast) {
+                                toast = document.createElement('div');
+                                toast.className = 'speed-toast';
+                                toast.innerHTML = '<span class="text-cyan-400">⚡</span> 2x 速播放中';
+                                toast.style.cssText = `
+                                    position: absolute;
+                                    top: 20px;
+                                    right: 20px;
+                                    background: rgba(0,0,0,0.6);
+                                    color: white;
+                                    padding: 6px 12px;
+                                    border-radius: 4px;
+                                    pointer-events: none;
+                                    z-index: 50;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                    backdrop-filter: blur(2px);
+                                `;
+                                container.appendChild(toast);
+                            }
+                        } else {
+                            if (toast) toast.remove();
+                        }
+                    };
+
+                    const onKeyDown = (e) => {
+                        const video = document.getElementById('videoPlayer');
+                        if (!video) return;
+                        // 允许暂停时操作，但忽略非方向键
+                        if (video.paused && !e.key.startsWith('Arrow')) return;
+                        if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+                        
+                        if (e.key === 'ArrowRight') {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            if (e.repeat) return;
+
+                            pressTimer = setTimeout(() => {
+                                isSpeeding = true;
+                                video.playbackRate = 2.0;
+                                // 长按加速时，如果是暂停状态，强制播放
+                                if (video.paused) {
+                                    video.play().catch(() => {});
+                                }
+                                showSpeedToast(true);
+                            }, LONG_PRESS_DELAY);
+                        } else if (e.key === 'ArrowLeft') {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            // 防止长按连续触发导致回退过快
+                            if (e.repeat) return;
+                            video.currentTime = Math.max(0, video.currentTime - 5);
+                            showToast('⏪ -5s');
+                        }
+                    };
+
+                    const onKeyUp = (e) => {
+                        const video = document.getElementById('videoPlayer');
+                        if (!video) return;
+
+                        if (e.key === 'ArrowRight') {
+                            e.stopPropagation();
+                            e.preventDefault();
+
+                            if (pressTimer) {
+                                clearTimeout(pressTimer);
+                                pressTimer = null;
+                            }
+
+                            if (isSpeeding) {
+                                isSpeeding = false;
+                                video.playbackRate = 1.0;
+                                showSpeedToast(false);
+                            } else {
+                                // 短按快进 5s
+                                video.currentTime = Math.min(video.duration, video.currentTime + 5);
+                                showToast('⏩ +5s');
+                            }
+                        }
+                    };
+
+                    window.addEventListener('keydown', onKeyDown, { capture: true });
+                    window.addEventListener('keyup', onKeyUp, { capture: true });
+                    
+                    onUnmounted(() => {
+                        window.removeEventListener('keydown', onKeyDown, { capture: true });
+                        window.removeEventListener('keyup', onKeyUp, { capture: true });
+                    });
+                };
+
+                // 加载数据
+                onMounted(async () => {
+                    setupKeyboardControls();
+                    try {
+                        let response = await fetch('./metadata.json');
+                        if (!response.ok) response = await fetch('../metadata.json');
+                        if (!response.ok) throw new Error('Failed to load metadata');
+                        animeList.value = await response.json();
+
+                        try {
+                            let movieResponse = await fetch('./japan_movies_metadata.json');
+                            if (!movieResponse.ok) movieResponse = await fetch('../japan_movies_metadata.json');
+                            if (movieResponse.ok) {
+                                movieList.value = await movieResponse.json();
+                            } else {
+                                movieList.value = [];
+                            }
+                        } catch (_) {
+                            movieList.value = [];
+                        }
+
+                        // New calendar data fetch
+                        const calendarResponse = await fetch('./anime_calendar.json');
+                        if (calendarResponse.ok) {
+                            calendarData.value = await calendarResponse.json();
+                        }
+
+                        // 初始化 Fuse
+                        if (window.Fuse) {
+                            const options = {
+                                keys: ['片名', '别名', '类型', '导演', '主演', '标签'],
+                                threshold: 0.3,
+                                includeScore: true
+                            };
+                            fuse = new Fuse(searchPool.value, options);
+
+                            const calendarOptions = {
+                                keys: ['片名', '别名'],
+                                threshold: 0.45,
+                                includeScore: true
+                            };
+                            calendarFuse = new Fuse(searchPool.value, calendarOptions);
+                        }
+
+                    } catch (error) {
+                        console.error("Error loading anime data:", error);
+                        alert("加载数据失败");
+                    } finally {
+                        loading.value = false;
+                    }
+                });
+
+                // 计算所有类型
+                const allGenres = computed(() => {
+                    const ignoredGenres = new Set([
+                        '动画', '日本动漫', '动漫', '日本', '其它', '其他', 'null', 'undefined',
+                        '傲娇恶役大小姐莉泽洛特与实况转播远藤君和解说员小林',
+                        '来自异世界的逃亡者',
+                        '世界触发者',
+                        '超自然9人组',
+                        '情色'
+                    ]);
+                    const termCount = new Map();
+                    
+                    animeList.value.forEach(anime => {
+                        const perAnimeTerms = new Set();
+                        const genres = (anime.类型 || '').split(/[\/,，\s、]+/).filter(Boolean);
+                        const tags = (anime.TAG标签 || '').split(/[\/,，\s、]+/).filter(Boolean);
+                        
+                        [...genres, ...tags].forEach(g => {
+                            const trimmed = g.trim();
+                            if (trimmed && !ignoredGenres.has(trimmed)) {
+                                perAnimeTerms.add(trimmed);
+                            }
+                        });
+
+                        perAnimeTerms.forEach(term => {
+                            termCount.set(term, (termCount.get(term) || 0) + 1);
+                        });
+                    });
+                    return Array.from(termCount.entries())
+                        .filter(([, count]) => count > 1)
+                        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
+                        .map(([term]) => term);
+                });
+
+                const genreExpanded = ref(false);
+                const genrePreviewCount = 18;
+                const displayedGenres = computed(() => {
+                    return genreExpanded.value ? allGenres.value : allGenres.value.slice(0, genrePreviewCount);
+                });
+
+                // 计算季度
+                const sortedSeasons = computed(() => {
+                    const seasonMap = new Set();
+                    animeList.value.forEach(anime => {
+                        const dateStr = anime.首播时间 || '';
+                        // 尝试解析 YYYY-MM
+                        const match = dateStr.match(/^(\d{4})-(\d{2})/);
+                        if (match) {
+                            const year = parseInt(match[1]);
+                            const month = parseInt(match[2]);
+                            let seasonMonth = 1;
+                            if (month >= 10) seasonMonth = 10;
+                            else if (month >= 7) seasonMonth = 7;
+                            else if (month >= 4) seasonMonth = 4;
+                            else seasonMonth = 1;
+                            
+                            seasonMap.add(`${year}-${seasonMonth}`);
+                        }
+                    });
+
+                    // 倒序排序
+                    return Array.from(seasonMap).sort((a, b) => {
+                        const [y1, m1] = a.split('-').map(Number);
+                        const [y2, m2] = b.split('-').map(Number);
+                        if (y1 !== y2) return y2 - y1;
+                        return m2 - m1;
+                    }).map(key => {
+                        const [y, m] = key.split('-');
+                        const monthNames = { '1': '一', '4': '四', '7': '七', '10': '十' };
+                        return {
+                            key: key,
+                            label: `${y}年${monthNames[m]}月新番`
+                        };
+                    });
+                });
+
+                // 计算季度分组（按年份）
+                const groupedSeasons = computed(() => {
+                    const groups = {};
+                    sortedSeasons.value.forEach(season => {
+                        const [year, month] = season.key.split('-');
+                        if (!groups[year]) {
+                            groups[year] = [];
+                        }
+                        groups[year].push({
+                            key: season.key,
+                            label: `${month}月`,
+                            fullLabel: season.label
+                        });
+                    });
+                    
+                    // 按年份倒序
+                    return Object.keys(groups).sort((a, b) => b - a).map(year => ({
+                        year: year,
+                        seasons: groups[year] // sortedSeasons 已经是倒序的，所以这里是 10, 7, 4, 1
+                    }));
+                });
+
+                const seasonKeySet = computed(() => new Set(sortedSeasons.value.map(s => s.key)));
+                const seasonNavYear = ref('');
+                const seasonNavYears = computed(() => groupedSeasons.value.map(g => g.year));
+
+                const yearExpanded = ref(false);
+                const yearPreviewCount = 18;
+                const displayedYears = computed(() => {
+                    return yearExpanded.value ? seasonNavYears.value : seasonNavYears.value.slice(0, yearPreviewCount);
+                });
+
+                watch(groupedSeasons, (groups) => {
+                    if (!groups || groups.length === 0) return;
+                    if (!seasonNavYear.value) {
+                        seasonNavYear.value = 'all';
+                    }
+                }, { immediate: true });
+
+                watch(currentSeason, (val) => {
+                    if (val && val !== 'all') {
+                        const [y] = val.split('-');
+                        seasonNavYear.value = y;
+                    } else if (val === 'all') {
+                        seasonNavYear.value = 'all';
+                    }
+                });
+
+                const seasonNavQuarters = computed(() => {
+                    if (seasonNavYear.value === 'all') return [];
+                    const year = seasonNavYear.value || groupedSeasons.value?.[0]?.year;
+                    if (!year) return [];
+                    const quarters = [
+                        { m: 1, label: '1月' },
+                        { m: 4, label: '4月' },
+                        { m: 7, label: '7月' },
+                        { m: 10, label: '10月' }
+                    ];
+                    const keys = seasonKeySet.value;
+                    return quarters.map(q => {
+                        const key = `${year}-${q.m}`;
+                        return { key, label: q.label, enabled: keys.has(key) };
+                    });
+                });
+
+                const setSeasonNavYear = (year) => {
+                    seasonNavYear.value = year;
+                };
+
+                // 过滤逻辑
+                const filteredAnimeList = computed(() => {
+                    if (searchQuery.value) {
+                        let results = [];
+                        if (fuse) {
+                            results = fuse.search(searchQuery.value).map(r => r.item);
+                        } else {
+                            const q = searchQuery.value.toLowerCase();
+                            const pool = searchPool.value || [];
+                            results = pool.filter(anime => {
+                                const title = (anime.片名 || '').toLowerCase();
+                                const alias = (anime.别名 || '').toLowerCase();
+                                return title.includes(q) || alias.includes(q);
+                            });
+                        }
+
+                        if (currentStatus.value !== 'all') {
+                            results = results.filter(anime => {
+                                const isCompleted = (anime.状态 || '').includes('完结');
+                                return currentStatus.value === 'completed' ? isCompleted : !isCompleted;
+                            });
+                        }
+
+                        if (currentGenre.value !== 'all') {
+                            results = results.filter(anime => {
+                                const g = currentGenre.value;
+                                const typeText = anime.类型 || '';
+                                const tagText = anime.TAG标签 || '';
+                                return typeText.includes(g) || tagText.includes(g);
+                            });
+                        }
+
+                        if (currentSeason.value !== 'all') {
+                            results = results.filter(anime => {
+                                const dateStr = anime.首播时间 || '';
+                                if (!dateStr) return true;
+                                if (currentSeason.value.indexOf('-') === -1) {
+                                    const sYear = parseInt(currentSeason.value);
+                                    const match = dateStr.match(/^(\d{4})/);
+                                    return match && parseInt(match[1]) === sYear;
+                                }
+                                const [sYear, sMonth] = currentSeason.value.split('-').map(Number);
+                                const match = dateStr.match(/^(\d{4})-(\d{2})/);
+                                if (!match) return false;
+                                const year = parseInt(match[1]);
+                                const month = parseInt(match[2]);
+                                if (year !== sYear) return false;
+                                let quarter = 1;
+                                if (month >= 10) quarter = 10;
+                                else if (month >= 7) quarter = 7;
+                                else if (month >= 4) quarter = 4;
+                                return quarter === sMonth;
+                            });
+                        }
+
+                        return results;
+                    }
+
+                    let list = animeList.value;
+
+                    // 1. 季度筛选
+                    if (currentSeason.value !== 'all') {
+                        if (currentSeason.value.indexOf('-') === -1) {
+                            // 仅年份筛选
+                            const sYear = parseInt(currentSeason.value);
+                            list = list.filter(anime => {
+                                const dateStr = anime.首播时间 || '';
+                                const match = dateStr.match(/^(\d{4})/);
+                                return match && parseInt(match[1]) === sYear;
+                            });
+                        } else {
+                            // 年份+季度筛选
+                            const [sYear, sMonth] = currentSeason.value.split('-').map(Number);
+                            list = list.filter(anime => {
+                                const dateStr = anime.首播时间 || '';
+                                const match = dateStr.match(/^(\d{4})-(\d{2})/);
+                                if (!match) return false;
+                                
+                                const year = parseInt(match[1]);
+                                const month = parseInt(match[2]);
+                                
+                                if (year !== sYear) return false;
+                                
+                                // 计算季度
+                                let quarter = 1;
+                                if (month >= 10) quarter = 10;
+                                else if (month >= 7) quarter = 7;
+                                else if (month >= 4) quarter = 4;
+                                
+                                return quarter === sMonth;
+                            });
+                        }
+                    }
+
+                    // 1.5 状态筛选
+                    if (currentStatus.value !== 'all') {
+                        list = list.filter(anime => {
+                            const isCompleted = (anime.状态 || '').includes('完结');
+                            return currentStatus.value === 'completed' ? isCompleted : !isCompleted;
+                        });
+                    }
+
+                    // 1.8 类型筛选
+                    if (currentGenre.value !== 'all') {
+                        list = list.filter(anime => {
+                            const g = currentGenre.value;
+                            const typeText = anime.类型 || '';
+                            const tagText = anime.TAG标签 || '';
+                            return typeText.includes(g) || tagText.includes(g);
+                        });
+                    }
+
+                    return list;
+                });
+
+                // 分页逻辑
+                const totalPages = computed(() => Math.ceil(filteredAnimeList.value.length / pageSize.value));
+                
+                const paginatedAnimeList = computed(() => {
+                    const start = (currentPage.value - 1) * pageSize.value;
+                    const end = start + pageSize.value;
+                    return filteredAnimeList.value.slice(start, end);
+                });
+
+                const changePage = (page) => {
+                    if (page < 1 || page > totalPages.value) return;
+                    currentPage.value = page;
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                };
+
+                // 监听筛选条件变化并重置分页
+                watch([currentSeason, searchQuery], () => {
+                    currentPage.value = 1;
+                    if (searchQuery.value) {
+                        currentView.value = 'list';
+                    }
+                });
+
+                const filterSeason = (key) => {
+                    currentSeason.value = key;
+                    currentView.value = 'list';
+                };
+
+                const goHome = () => {
+                    currentSeason.value = 'all';
+                    currentStatus.value = 'all';
+                    currentGenre.value = 'all';
+                    seasonNavYear.value = 'all';
+                    currentView.value = 'list';
+                };
+
+                const getSeasonLabel = (key) => {
+                    if (key && key !== 'all' && key.indexOf('-') === -1) {
+                        return `${key}年新番`;
+                    }
+                    const found = sortedSeasons.value.find(s => s.key === key);
+                    return found ? found.label : key;
+                };
+
+                const isNew = (dateStr) => {
+                    if (!dateStr) return false;
+                    const now = new Date();
+                    const date = new Date(dateStr);
+                    const diffTime = Math.abs(now - date);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    return diffDays < 90; // 小于 3 个月
+                };
+
+                // 推荐逻辑
+                const generateRecommendations = (target) => {
+                   if (!target) return [];
+                   
+                   const getTerms = (str) => str ? str.split(/[\/,，\s、]+/).filter(Boolean) : [];
+                   
+                   const targetGenres = getTerms(target.类型);
+                   const targetDirector = getTerms(target.导演);
+                   const targetActors = getTerms(target.主演 || target.演员);
+                   
+                   // 权重
+                   const W_GENRE = 2;
+                   const W_DIRECTOR = 3;
+                   const W_ACTOR = 1;
+                   const W_RATING = 0.5;
+                   
+                   const pool = searchPool.value || [];
+                   const candidates = pool.filter(a => a !== target).map(a => {
+                       let score = 0;
+                       
+                       // 类型重合
+                       const aGenres = getTerms(a.类型);
+                       const commonGenres = targetGenres.filter(g => aGenres.includes(g));
+                       score += commonGenres.length * W_GENRE;
+                       
+                       // 导演重合
+                       const aDirector = getTerms(a.导演);
+                       if (targetDirector.some(d => aDirector.includes(d))) score += W_DIRECTOR;
+                       
+                       // 主演重合
+                       const aActors = getTerms(a.主演 || a.演员);
+                       const commonActors = targetActors.filter(act => aActors.includes(act));
+                       score += commonActors.length * W_ACTOR;
+                       
+                       // 评分加权
+                       const rating = parseFloat(a.豆瓣) || 0;
+                       score += rating * W_RATING;
+                       
+                       return { item: a, score };
+                   });
+                   
+                   return candidates.sort((a, b) => b.score - a.score).slice(0, 10).map(c => c.item);
+                };
+
+                // 详情与播放器
+                const openDetail = (anime) => {
+                    selectedAnime.value = anime;
+                    currentEpisodeUrl.value = null;
+                    activeTab.value = 'episodes';
+                    document.body.style.overflow = 'hidden';
+                    relatedList.value = generateRecommendations(anime);
+                };
+
+                const closeDetail = () => {
+                    selectedAnime.value = null;
+                    currentEpisodeUrl.value = null;
+                    document.body.style.overflow = '';
+                    if (videoUxTeardown) {
+                        videoUxTeardown();
+                        videoUxTeardown = null;
+                    }
+                    if (hlsInstance.value) {
+                        hlsInstance.value.destroy();
+                        hlsInstance.value = null;
+                    }
+                    const video = document.getElementById('videoPlayer');
+                    if (video) {
+                        video.pause();
+                        video.removeAttribute('src');
+                        video.load();
+                    }
+                };
+
+                const playEpisode = (url, name) => {
+                    currentEpisodeUrl.value = url;
+                    
+                    nextTick(() => {
+                        const video = document.getElementById('videoPlayer');
+                        if (!video) return;
+                        ensureAutoNextBound(video);
+
+                        if (window.Hls && Hls.isSupported()) {
+                            if (videoUxTeardown) {
+                                videoUxTeardown();
+                                videoUxTeardown = null;
+                            }
+                            if (hlsInstance.value) {
+                                hlsInstance.value.destroy();
+                                hlsInstance.value = null;
+                                hlsVideoPrepared.value = false;
+                            }
+
+                            const prepareVideo = () => {
+                                if (hlsVideoPrepared.value) return;
+                                hlsVideoPrepared.value = true;
+                                video.preload = 'auto';
+                                video.playsInline = true;
+                            };
+
+                            const getOrCreateHls = () => {
+                                if (hlsInstance.value) return hlsInstance.value;
+                                const hls = new Hls({
+                                    enableWorker: true,
+                                    lowLatencyMode: false,
+                                    capLevelToPlayerSize: true,
+                                    backBufferLength: 90,
+                                    maxBufferHole: 2.0,
+                                    maxBufferLength: 120,
+                                    maxMaxBufferLength: 600,
+                                    startFragPrefetch: true,
+                                    fragLoadingTimeOut: 20000,
+                                    manifestLoadingTimeOut: 20000,
+                                    levelLoadingTimeOut: 20000,
+                                    fragLoadingMaxRetry: 6,
+                                    manifestLoadingMaxRetry: 6,
+                                    levelLoadingMaxRetry: 6,
+                                    fragLoadingRetryDelay: 1000,
+                                    manifestLoadingRetryDelay: 1000,
+                                    levelLoadingRetryDelay: 1000,
+                                });
+                                hls.on(Hls.Events.ERROR, (_event, data) => {
+                                    if (!data || !data.fatal) return;
+                                    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                                        try {
+                                            hls.startLoad();
+                                        } catch (_) {}
+                                        return;
+                                    }
+                                    if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                                        try {
+                                            hls.recoverMediaError();
+                                        } catch (_) {}
+                                        return;
+                                    }
+                                    try {
+                                        hls.destroy();
+                                    } finally {
+                                        hlsInstance.value = null;
+                                        hlsVideoPrepared.value = false;
+                                    }
+                                });
+                                hlsInstance.value = hls;
+                                return hls;
+                            };
+
+                            prepareVideo();
+
+                            const hls = getOrCreateHls();
+                            const onParsed = () => {
+                                hls.off(Hls.Events.MANIFEST_PARSED, onParsed);
+                                const p = video.play();
+                                if (p && typeof p.catch === 'function') p.catch(() => {});
+                            };
+                            hls.on(Hls.Events.MANIFEST_PARSED, onParsed);
+
+                            const setSource = () => {
+                                hls.loadSource(url);
+                            };
+                            if (hls.media !== video) {
+                                const onAttached = () => {
+                                    hls.off(Hls.Events.MEDIA_ATTACHED, onAttached);
+                                    setSource();
+                                };
+                                hls.on(Hls.Events.MEDIA_ATTACHED, onAttached);
+                                hls.attachMedia(video);
+                            } else {
+                                setSource();
+                            }
+
+                            videoUxTeardown = attachSeekPreview(video, () => hls);
+                        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                            if (videoUxTeardown) {
+                                videoUxTeardown();
+                                videoUxTeardown = null;
+                            }
+                            if (hlsInstance.value) {
+                                hlsInstance.value.destroy();
+                                hlsInstance.value = null;
+                                hlsVideoPrepared.value = false;
+                            }
+                            video.src = url;
+                            video.load();
+                            video.addEventListener('loadedmetadata', () => {
+                                const p = video.play();
+                                if (p && typeof p.catch === 'function') p.catch(() => {});
+                            }, { once: true });
+
+                            videoUxTeardown = attachSeekPreview(video, null);
+                        }
+                    });
+                };
+
+                // 导航高亮逻辑
+                const currentActiveNav = computed(() => {
+                    if (currentView.value !== 'list') return currentView.value; // 'archive'
+
+                    if (currentStatus.value === 'ongoing' && currentSeason.value === 'all') return 'ongoing';
+                    if (currentStatus.value === 'completed' && currentSeason.value === 'all') return 'completed';
+                    if (currentSeason.value === String(currentYear)) return 'currentYear';
+                    if (currentSeason.value === String(prevYear)) return 'prevYear';
+                    return 'home';
+                });
+
+                return {
+                    loading,
+                    searchQuery,
+                    sortedSeasons,
+                    groupedSeasons,     // 已添加
+                    seasonNavYears,
+                    seasonNavYear,
+                    seasonNavQuarters,
+                    setSeasonNavYear,
+                    yearExpanded,
+                    yearPreviewCount,
+                    displayedYears,
+                    currentSeason,
+                    currentStatus,
+                    currentGenre,
+                    allGenres,
+                    genreExpanded,
+                    genrePreviewCount,
+                    displayedGenres,
+                    filteredAnimeList,
+                    paginatedAnimeList, // 已添加
+                    currentPage,        // 已添加
+                    currentView,        // 视图模式
+                    showSuggestions,    // 搜索建议
+                    searchSuggestions,  // 搜索建议
+                    selectSuggestion,   // 搜索建议
+                    totalPages,         // 已添加
+                    changePage,         // 已添加
+                    activeTab,          // 已添加
+                    relatedList,        // 已添加
+                    filterSeason,
+                    goHome,
+                    getSeasonLabel,
+                    selectedAnime,
+                    openDetail,
+                    closeDetail,
+                    playEpisode,
+                    currentEpisodeUrl,
+                    isNew,
+                    currentYear,
+                    prevYear,
+                    currentActiveNav,
+                    weekDays,
+                    currentDayIndex,
+                    calendarGrouped,
+                    calendarData,
+                    currentDayAnime,
+                    handleCalendarClick
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
